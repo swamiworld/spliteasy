@@ -7,6 +7,7 @@ export interface Expense {
   splits: Record<string, number>;
   date: number;
   createdBy: string;
+  createdAt?: number;
 }
 
 export interface Transfer { from: string; to: string; amount: number }

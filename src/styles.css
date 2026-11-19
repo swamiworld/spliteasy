@@ -20,4 +20,13 @@ label { display:block; margin:6px 0; } .check { display:flex; align-items:center
 button { cursor:pointer; } button.primary { background:var(--brand); color:#fff; border-color:var(--brand); }
 button.link { border:0; background:none; color:var(--brand); padding:4px; }
 .modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:flex-end; justify-content:center; }
+.tabs { display:flex; border-bottom:1px solid var(--line); margin:8px 0; }
+.tabs button { flex:1; border:0; border-bottom:3px solid transparent; border-radius:0; background:none; }
+.tabs button.active { border-bottom-color:var(--brand); color:var(--brand); font-weight:600; }
+.row.tight { margin:4px 0; flex-wrap:wrap; }
+.filters { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:8px 0; }
+.filters input, .filters select { margin:0; }
+.filters > :first-child, .filters > select { grid-column:span 1; }
+.nowrap { white-space:nowrap; }
+.small-text { font-size:13px; }
 .card { background:var(--bg); width:100%; max-width:640px; max-height:90vh; overflow:auto; padding:16px; border-radius:16px 16px 0 0; }

@@ -1,16 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { addExpense, removeExpense, watchExpenses, watchGroup, Group } from './data';
+import { deleteExpense, renameMe, watchExpenses, watchGroup, watchLog, Group } from './data';
 import { Expense, netBalances, simplify } from './balances';
-import { equalSplit, fmt, parseMoney } from './money';
+import { describe, LogEntry } from './changes';
+import { fmt } from './money';
+import { fmtDate, fmtDateTime, toISODate } from './dates';
+import ExpenseForm from './ExpenseForm';
+
+type Tab = 'summary' | 'expenses';
+type FormState = null | { kind: 'expense' | 'settlement'; existing?: Expense };
 
 export default function GroupPage({ id, user }: { id: string; user: User }) {
   const [group, setGroup] = useState<Group | null | undefined>(undefined);
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [form, setForm] = useState<null | 'expense' | 'settlement'>(null);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [form, setForm] = useState<FormState>(null);
+  const [tab, setTab] = useState<Tab>('summary');
+  const [showAllLog, setShowAllLog] = useState(false);
 
   useEffect(() => watchGroup(id, setGroup), [id]);
   useEffect(() => watchExpenses(id, setExpenses), [id]);
+  useEffect(() => watchLog(id, setLog), [id]);
 
   const net = useMemo(() => (group ? netBalances(expenses, group.memberIds) : {}), [expenses, group]);
   const transfers = useMemo(() => simplify(net), [net]);
@@ -19,155 +29,163 @@ export default function GroupPage({ id, user }: { id: string; user: User }) {
   if (group === null || !group.memberIds.includes(user.uid))
     return <main><p className="err">Group not found, or you are not a member.</p><a href="#/">Back</a></main>;
 
+  const myName = group.members[user.uid]?.name ?? user.displayName ?? 'Someone';
   const name = (u: string) => (u === user.uid ? 'You' : group.members[u]?.name ?? 'Unknown');
   const invite = `${location.origin}${location.pathname}#/join/${id}`;
+
+  async function editName() {
+    const n = prompt('Your name in this group:', myName)?.trim();
+    if (!n || n === myName) return;
+    try { await renameMe(id, user.uid, n.slice(0, 40)); } catch (e: any) { alert(e.message); }
+  }
+  function remove(e: Expense) {
+    if (confirm(`Delete “${e.description}” (${fmt(e.amount)})? This is recorded in the change log.`))
+      deleteExpense(id, e, { uid: user.uid, name: myName }).catch((err) => alert(err.message));
+  }
+  const onEdit = (e: Expense) => setForm({ kind: e.type, existing: e });
 
   return (
     <main>
       <a href="#/">← Groups</a>
       <h2>{group.name}</h2>
-      <button className="link" onClick={() => navigator.clipboard.writeText(invite).then(() => alert('Invite link copied'))}>
-        Copy invite link
-      </button>
-
-      <h3>Balances</h3>
-      <ul className="list">
-        {group.memberIds.map((m) => (
-          <li key={m} className="between">
-            <span>{name(m)}</span>
-            <span className={net[m] > 0 ? 'pos' : net[m] < 0 ? 'neg' : 'muted'}>
-              {net[m] > 0 ? `gets back ${fmt(net[m])}` : net[m] < 0 ? `owes ${fmt(-net[m])}` : 'settled up'}
-            </span>
-          </li>
-        ))}
-      </ul>
-
-      {transfers.length > 0 && (
-        <>
-          <h3>Suggested payments</h3>
-          <ul className="list">
-            {transfers.map((t, i) => (
-              <li key={i}>{name(t.from)} {t.from === user.uid ? 'pay' : 'pays'} {name(t.to)} <b>{fmt(t.amount)}</b></li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      <div className="row">
-        <button className="primary" onClick={() => setForm('expense')}>Add expense</button>
-        <button onClick={() => setForm('settlement')}>Settle up</button>
+      <div className="row tight">
+        <button className="link" onClick={() => navigator.clipboard.writeText(invite).then(() => alert('Invite link copied'))}>Copy invite link</button>
+        <button className="link" onClick={editName}>Edit my name ({myName})</button>
       </div>
 
-      {form && <ExpenseForm group={group} user={user} kind={form} transfers={transfers} onClose={() => setForm(null)} />}
+      <div className="tabs">
+        <button className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>Summary</button>
+        <button className={tab === 'expenses' ? 'active' : ''} onClick={() => setTab('expenses')}>Expenses ({expenses.length})</button>
+      </div>
 
-      <h3>History</h3>
-      {expenses.length === 0 && <p className="muted">Nothing yet.</p>}
-      <ul className="list">
-        {expenses.map((e) => (
-          <li key={e.id} className="between">
-            <span>
-              {e.type === 'settlement' ? '💸 ' : ''}{e.description || 'Expense'}
-              <span className="muted"> · {new Date(e.date).toLocaleDateString()} · {name(e.paidBy)} paid</span>
-            </span>
-            <span>
-              {fmt(e.amount)}{' '}
-              {e.createdBy === user.uid && (
-                <button className="link" onClick={() => confirm('Delete this entry?') && removeExpense(id, e.id)}>✕</button>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
+      <div className="row">
+        <button className="primary" onClick={() => setForm({ kind: 'expense' })}>Add expense</button>
+        <button onClick={() => setForm({ kind: 'settlement' })}>Settle up</button>
+      </div>
+
+      {tab === 'summary' ? (
+        <>
+          <h3>Balances</h3>
+          <ul className="list">
+            {group.memberIds.map((m) => (
+              <li key={m} className="between">
+                <span>{name(m)}</span>
+                <span className={net[m] > 0 ? 'pos' : net[m] < 0 ? 'neg' : 'muted'}>
+                  {net[m] > 0 ? `gets back ${fmt(net[m])}` : net[m] < 0 ? `owes ${fmt(-net[m])}` : 'settled up'}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {transfers.length > 0 && (
+            <>
+              <h3>Suggested payments</h3>
+              <ul className="list">
+                {transfers.map((t, i) => (
+                  <li key={i}>{name(t.from)} {t.from === user.uid ? 'pay' : 'pays'} {name(t.to)} <b>{fmt(t.amount)}</b></li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <h3>Recent transactions</h3>
+          {expenses.length === 0 && <p className="muted">Nothing yet.</p>}
+          <ExpenseList items={expenses.slice(0, 5)} name={name} onEdit={onEdit} onDelete={remove} />
+          {expenses.length > 5 && <button className="link" onClick={() => setTab('expenses')}>View all {expenses.length} →</button>}
+
+          <h3>Change log</h3>
+          {log.length === 0 && <p className="muted">No activity recorded yet.</p>}
+          <ul className="list">
+            {(showAllLog ? log : log.slice(0, 5)).map((l) => (
+              <li key={l.id}>
+                {describe(l, name)}
+                <div className="muted small-text">{fmtDateTime(l.at)}</div>
+              </li>
+            ))}
+          </ul>
+          {log.length > 5 && (
+            <button className="link" onClick={() => setShowAllLog(!showAllLog)}>{showAllLog ? 'Show less' : `Show all ${log.length}`}</button>
+          )}
+        </>
+      ) : (
+        <ExpensesTab group={group} expenses={expenses} name={name} onEdit={onEdit} onDelete={remove} />
+      )}
+
+      {form && (
+        <ExpenseForm
+          key={form.existing?.id ?? form.kind}
+          group={group} user={user} kind={form.kind} transfers={transfers}
+          existing={form.existing} onClose={() => setForm(null)}
+        />
+      )}
     </main>
   );
 }
 
-function ExpenseForm({ group, user, kind, transfers, onClose }: {
-  group: Group; user: User; kind: 'expense' | 'settlement';
-  transfers: { from: string; to: string; amount: number }[]; onClose: () => void;
-}) {
-  const ids = group.memberIds;
-  const nm = (u: string) => (u === user.uid ? 'You' : group.members[u]?.name ?? 'Unknown');
-  const suggestion = transfers.find((t) => t.from === user.uid);
+interface ListProps {
+  items: Expense[];
+  name: (u: string) => string;
+  onEdit: (e: Expense) => void;
+  onDelete: (e: Expense) => void;
+}
 
-  const [desc, setDesc] = useState('');
-  const [amountStr, setAmountStr] = useState(kind === 'settlement' && suggestion ? String(suggestion.amount / 100) : '');
-  const [paidBy, setPaidBy] = useState(user.uid);
-  const [to, setTo] = useState(suggestion?.to ?? ids.find((i) => i !== user.uid) ?? user.uid);
-  const [mode, setMode] = useState<'equal' | 'exact'>('equal');
-  const [chosen, setChosen] = useState<string[]>(ids);
-  const [exact, setExact] = useState<Record<string, string>>({});
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
+function ExpenseList({ items, name, onEdit, onDelete }: ListProps) {
+  return (
+    <ul className="list">
+      {items.map((e) => (
+        <li key={e.id} className="between">
+          <span>
+            {e.type === 'settlement' ? '💸 ' : ''}{e.description || 'Expense'}
+            <span className="muted"> · {fmtDate(e.date)} · {name(e.paidBy)} paid</span>
+          </span>
+          <span className="nowrap">
+            {fmt(e.amount)}{' '}
+            <button className="link" aria-label="Edit" onClick={() => onEdit(e)}>✎</button>
+            <button className="link" aria-label="Delete" onClick={() => onDelete(e)}>✕</button>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
-  const amount = parseMoney(amountStr);
+function ExpensesTab({ group, expenses, name, onEdit, onDelete }: { group: Group; expenses: Expense[] } & Omit<ListProps, 'items'>) {
+  const [text, setText] = useState('');
+  const [payer, setPayer] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
 
-  async function save() {
-    if (!amount || amount <= 0) return setErr('Enter a valid amount (up to 2 decimals).');
-    let splits: Record<string, number>;
-    if (kind === 'settlement') {
-      if (to === paidBy) return setErr('Payer and receiver must differ.');
-      splits = { [to]: amount };
-    } else if (mode === 'equal') {
-      if (chosen.length === 0) return setErr('Pick at least one person.');
-      splits = equalSplit(amount, chosen);
-    } else {
-      splits = {};
-      let sum = 0;
-      for (const u of ids) {
-        const v = exact[u]?.trim() ? parseMoney(exact[u]) : 0;
-        if (v === null) return setErr(`Invalid amount for ${nm(u)}.`);
-        if (v > 0) { splits[u] = v; sum += v; }
-      }
-      if (sum !== amount) return setErr(`Splits add up to ${fmt(sum)} but total is ${fmt(amount)}.`);
-    }
-    setBusy(true);
-    try {
-      await addExpense(group.id, {
-        type: kind, description: desc.trim() || (kind === 'settlement' ? 'Payment' : 'Expense'),
-        amount, paidBy, splits, date: Date.now(), createdBy: user.uid,
-      });
-      onClose();
-    } catch (e: any) { setErr(e.message); setBusy(false); }
-  }
+  const filtered = useMemo(() => {
+    const t = text.trim().toLowerCase();
+    return expenses.filter((e) => {
+      const d = toISODate(e.date);
+      return (!t || e.description.toLowerCase().includes(t))
+        && (!payer || e.paidBy === payer)
+        && (!from || d >= from)
+        && (!to || d <= to);
+    });
+  }, [expenses, text, payer, from, to]);
+
+  const total = filtered.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const active = text || payer || from || to;
 
   return (
-    <div className="modal"><div className="card">
-      <h3>{kind === 'settlement' ? 'Settle up' : 'Add expense'}</h3>
-      {kind === 'expense' && <input placeholder="Description" value={desc} onChange={(e) => setDesc(e.target.value)} />}
-      <input placeholder="Amount" inputMode="decimal" value={amountStr} onChange={(e) => setAmountStr(e.target.value)} />
-      <label>{kind === 'settlement' ? 'Who paid' : 'Paid by'}
-        <select value={paidBy} onChange={(e) => setPaidBy(e.target.value)}>{ids.map((u) => <option key={u} value={u}>{nm(u)}</option>)}</select>
-      </label>
-      {kind === 'settlement' ? (
-        <label>Paid to
-          <select value={to} onChange={(e) => setTo(e.target.value)}>{ids.map((u) => <option key={u} value={u}>{nm(u)}</option>)}</select>
-        </label>
-      ) : (
-        <>
-          <div className="row">
-            <button className={mode === 'equal' ? 'primary' : ''} onClick={() => setMode('equal')}>Split equally</button>
-            <button className={mode === 'exact' ? 'primary' : ''} onClick={() => setMode('exact')}>Exact amounts</button>
-          </div>
-          {ids.map((u) => (
-            <div key={u} className="between">
-              {mode === 'equal' ? (
-                <label className="check">
-                  <input type="checkbox" checked={chosen.includes(u)} onChange={(e) => setChosen(e.target.checked ? [...chosen, u] : chosen.filter((x) => x !== u))} />
-                  {nm(u)}
-                </label>
-              ) : (
-                <>
-                  <span>{nm(u)}</span>
-                  <input className="small" placeholder="0.00" inputMode="decimal" value={exact[u] ?? ''} onChange={(e) => setExact({ ...exact, [u]: e.target.value })} />
-                </>
-              )}
-            </div>
-          ))}
-        </>
-      )}
-      {err && <p className="err">{err}</p>}
-      <div className="row"><button className="primary" disabled={busy} onClick={save}>Save</button><button onClick={onClose}>Cancel</button></div>
-    </div></div>
+    <>
+      <div className="filters">
+        <input placeholder="Search description" value={text} onChange={(e) => setText(e.target.value)} />
+        <select value={payer} onChange={(e) => setPayer(e.target.value)}>
+          <option value="">Paid by: anyone</option>
+          {group.memberIds.map((u) => <option key={u} value={u}>{name(u)}</option>)}
+        </select>
+        <label>From <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+        <label>To <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+      </div>
+      <div className="between">
+        <span className="muted">{filtered.length} of {expenses.length} · spent {fmt(total)}</span>
+        {active && <button className="link" onClick={() => { setText(''); setPayer(''); setFrom(''); setTo(''); }}>Clear filters</button>}
+      </div>
+      {filtered.length === 0 && <p className="muted">No matching entries.</p>}
+      <ExpenseList items={filtered} name={name} onEdit={onEdit} onDelete={onDelete} />
+    </>
   );
 }
