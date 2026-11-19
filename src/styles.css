@@ -1,0 +1,23 @@
+:root { --bg:#f8fafc; --fg:#0f172a; --muted:#64748b; --brand:#0f766e; --card:#fff; --line:#e2e8f0; --pos:#15803d; --neg:#b91c1c; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --card:#111a2e; --line:#1f2a44; --pos:#4ade80; --neg:#f87171; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui,-apple-system,Segoe UI,sans-serif; }
+.app { max-width:640px; margin:0 auto; padding:0 16px 48px; }
+header { display:flex; justify-content:space-between; align-items:center; padding:14px 0; }
+.logo { font-weight:700; color:var(--brand); text-decoration:none; font-size:20px; }
+a { color:var(--brand); }
+.center { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:16px; text-align:center; }
+.muted { color:var(--muted); } .err { color:var(--neg); } .pos { color:var(--pos); } .neg { color:var(--neg); }
+.list { list-style:none; padding:0; margin:8px 0 16px; background:var(--card); border:1px solid var(--line); border-radius:12px; }
+.list li { padding:12px 14px; border-bottom:1px solid var(--line); }
+.list li:last-child { border-bottom:0; }
+.list a { text-decoration:none; color:inherit; display:block; }
+.between { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.row { display:flex; gap:8px; margin:12px 0; }
+input, select, button { font:inherit; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+input, select { width:100%; margin:4px 0; } input.small { width:110px; } .row input { flex:1; }
+label { display:block; margin:6px 0; } .check { display:flex; align-items:center; gap:8px; } .check input { width:auto; }
+button { cursor:pointer; } button.primary { background:var(--brand); color:#fff; border-color:var(--brand); }
+button.link { border:0; background:none; color:var(--brand); padding:4px; }
+.modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:flex-end; justify-content:center; }
+.card { background:var(--bg); width:100%; max-width:640px; max-height:90vh; overflow:auto; padding:16px; border-radius:16px 16px 0 0; }
