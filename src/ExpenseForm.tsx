@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { saveExpense, Group } from './data';
+import { loadBill, saveExpense, Group } from './data';
+import { compressImage, MAX_BILLS } from './image';
 import type { Expense, Transfer } from './balances';
 import { snap } from './changes';
 import { equalSplit, fmt, parseMoney } from './money';
@@ -41,6 +42,35 @@ export default function ExpenseForm({ group, user, kind, transfers, existing, on
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Bills: already-saved ones (loaded lazily), ones marked for removal, and newly picked photos.
+  const [saved, setSaved] = useState<{ id: string; src: string | null }[]>(
+    (existing?.billIds ?? []).map((id) => ({ id, src: null })),
+  );
+  const [added, setAdded] = useState<string[]>([]);
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [processing, setProcessing] = useState(false);
+
+  useEffect(() => {
+    for (const b of existing?.billIds ?? [])
+      loadBill(group.id, b).then((src) => setSaved((cur) => cur.map((x) => (x.id === b ? { ...x, src } : x)))).catch(() => {});
+  }, [existing, group.id]);
+
+  const billCount = saved.length + added.length;
+
+  async function pickFiles(files: FileList | null) {
+    if (!files?.length) return;
+    setErr('');
+    setProcessing(true);
+    try {
+      const room = MAX_BILLS - billCount;
+      const out: string[] = [];
+      for (const f of Array.from(files).slice(0, room)) out.push(await compressImage(f));
+      setAdded((cur) => [...cur, ...out]);
+      if (files.length > room) setErr(`Only ${MAX_BILLS} bills per expense; extra files were skipped.`);
+    } catch (e: any) { setErr(e.message); }
+    setProcessing(false);
+  }
+
   async function save() {
     const amount = parseMoney(amountStr);
     if (!amount || amount <= 0) return setErr('Enter a valid amount (up to 2 decimals).');
@@ -78,6 +108,7 @@ export default function ExpenseForm({ group, user, kind, transfers, existing, on
         },
         { uid: user.uid, name: myName },
         existing ? snap(existing) : null,
+        { keep: saved.map((b) => b.id), remove: removed, add: added },
       );
       onClose();
     } catch (e: any) { setErr(e.message); setBusy(false); }
@@ -122,8 +153,36 @@ export default function ExpenseForm({ group, user, kind, transfers, existing, on
           ))}
         </>
       )}
+      {kind === 'expense' && (
+        <div className="bills">
+          <div className="between">
+            <span>Bills ({billCount}/{MAX_BILLS})</span>
+            {billCount < MAX_BILLS && (
+              <label className="filebtn">
+                {processing ? 'Processing…' : '＋ Add photo'}
+                <input type="file" accept="image/*" multiple hidden disabled={processing}
+                  onChange={(e) => { pickFiles(e.target.files); e.target.value = ''; }} />
+              </label>
+            )}
+          </div>
+          <div className="thumbs">
+            {saved.map((b) => (
+              <div key={b.id} className="thumb">
+                {b.src ? <img src={b.src} alt="Bill" /> : <span className="muted">…</span>}
+                <button aria-label="Remove bill" onClick={() => { setSaved(saved.filter((x) => x.id !== b.id)); setRemoved([...removed, b.id]); }}>✕</button>
+              </div>
+            ))}
+            {added.map((src, i) => (
+              <div key={i} className="thumb">
+                <img src={src} alt="New bill" />
+                <button aria-label="Remove bill" onClick={() => setAdded(added.filter((_, j) => j !== i))}>✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {err && <p className="err">{err}</p>}
-      <div className="row"><button className="primary" disabled={busy} onClick={save}>Save</button><button onClick={onClose}>Cancel</button></div>
+      <div className="row"><button className="primary" disabled={busy || processing} onClick={save}>Save</button><button onClick={onClose}>Cancel</button></div>
     </div></div>
   );
 }

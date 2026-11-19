@@ -1,5 +1,5 @@
 import {
-  arrayUnion, collection, doc, limit, onSnapshot, orderBy, query,
+  arrayUnion, collection, doc, getDoc, limit, onSnapshot, orderBy, query,
   setDoc, updateDoc, where, serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -52,19 +52,41 @@ export function watchLog(gid: string, cb: (l: LogEntry[]) => void) {
   return onSnapshot(q, (s) => cb(s.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<LogEntry, 'id'>) }))), () => cb([]));
 }
 
+export interface BillChanges {
+  keep: string[];   // existing bill ids to retain
+  remove: string[]; // existing bill ids to delete
+  add: string[];    // new compressed images (data URLs)
+}
+
+/** Bills live in their own subcollection so listing expenses never downloads images. */
+export async function loadBill(gid: string, billId: string): Promise<string | null> {
+  const s = await getDoc(doc(db, 'groups', gid, 'bills', billId));
+  return s.exists() ? (s.data().data as string) : null;
+}
+
 /** Add (id = null) or edit an expense and write an audit entry, atomically. */
 export async function saveExpense(
-  gid: string, id: string | null, data: ExpenseData, actor: { uid: string; name: string }, before: Snap | null,
+  gid: string, id: string | null, data: Omit<ExpenseData, 'billIds'>, actor: { uid: string; name: string },
+  before: Snap | null, bills: BillChanges = { keep: [], remove: [], add: [] },
 ) {
   const expRef = id ? doc(db, 'groups', gid, 'expenses', id) : doc(collection(db, 'groups', gid, 'expenses'));
   const logRef = doc(collection(db, 'groups', gid, 'log'));
+  const batch = writeBatch(db);
+
+  const newIds = bills.add.map((img) => {
+    const ref = doc(collection(db, 'groups', gid, 'bills'));
+    batch.set(ref, { expenseId: expRef.id, data: img, by: actor.uid, at: Date.now() });
+    return ref.id;
+  });
+  for (const b of bills.remove) batch.delete(doc(db, 'groups', gid, 'bills', b));
+
+  const full: ExpenseData = { ...data, billIds: [...bills.keep, ...newIds] };
   const entry: Omit<LogEntry, 'id'> = {
     action: before ? 'edit' : 'add', expenseId: expRef.id, by: actor.uid, byName: actor.name, at: Date.now(),
-    description: data.description, amount: data.amount, after: snap(data),
+    description: full.description, amount: full.amount, after: snap(full),
     ...(before ? { before } : {}),
   };
-  const batch = writeBatch(db);
-  batch.set(expRef, data);
+  batch.set(expRef, full);
   batch.set(logRef, entry);
   await batch.commit();
 }
@@ -72,6 +94,7 @@ export async function saveExpense(
 export async function deleteExpense(gid: string, e: Expense, actor: { uid: string; name: string }) {
   const batch = writeBatch(db);
   batch.delete(doc(db, 'groups', gid, 'expenses', e.id));
+  for (const b of e.billIds ?? []) batch.delete(doc(db, 'groups', gid, 'bills', b));
   batch.set(doc(collection(db, 'groups', gid, 'log')), {
     action: 'delete', expenseId: e.id, by: actor.uid, byName: actor.name, at: Date.now(),
     description: e.description, amount: e.amount, before: snap(e),

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { deleteExpense, renameMe, watchExpenses, watchGroup, watchLog, Group } from './data';
+import { deleteExpense, loadBill, renameMe, watchExpenses, watchGroup, watchLog, Group } from './data';
 import { Expense, netBalances, simplify } from './balances';
 import { describe, LogEntry } from './changes';
 import { fmt } from './money';
@@ -17,6 +17,7 @@ export default function GroupPage({ id, user }: { id: string; user: User }) {
   const [form, setForm] = useState<FormState>(null);
   const [tab, setTab] = useState<Tab>('summary');
   const [showAllLog, setShowAllLog] = useState(false);
+  const [viewing, setViewing] = useState<Expense | null>(null);
 
   useEffect(() => watchGroup(id, setGroup), [id]);
   useEffect(() => watchExpenses(id, setExpenses), [id]);
@@ -90,7 +91,7 @@ export default function GroupPage({ id, user }: { id: string; user: User }) {
 
           <h3>Recent transactions</h3>
           {expenses.length === 0 && <p className="muted">Nothing yet.</p>}
-          <ExpenseList items={expenses.slice(0, 5)} name={name} onEdit={onEdit} onDelete={remove} />
+          <ExpenseList items={expenses.slice(0, 5)} name={name} onEdit={onEdit} onDelete={remove} onBills={setViewing} />
           {expenses.length > 5 && <button className="link" onClick={() => setTab('expenses')}>View all {expenses.length} →</button>}
 
           <h3>Change log</h3>
@@ -108,8 +109,10 @@ export default function GroupPage({ id, user }: { id: string; user: User }) {
           )}
         </>
       ) : (
-        <ExpensesTab group={group} expenses={expenses} name={name} onEdit={onEdit} onDelete={remove} />
+        <ExpensesTab group={group} expenses={expenses} name={name} onEdit={onEdit} onDelete={remove} onBills={setViewing} />
       )}
+
+      {viewing && <BillViewer gid={id} expense={viewing} onClose={() => setViewing(null)} />}
 
       {form && (
         <ExpenseForm
@@ -127,9 +130,24 @@ interface ListProps {
   name: (u: string) => string;
   onEdit: (e: Expense) => void;
   onDelete: (e: Expense) => void;
+  onBills: (e: Expense) => void;
 }
 
-function ExpenseList({ items, name, onEdit, onDelete }: ListProps) {
+function BillViewer({ gid, expense, onClose }: { gid: string; expense: Expense; onClose: () => void }) {
+  const [imgs, setImgs] = useState<(string | null)[] | null>(null);
+  useEffect(() => {
+    Promise.all((expense.billIds ?? []).map((b) => loadBill(gid, b).catch(() => null))).then(setImgs);
+  }, [gid, expense]);
+  return (
+    <div className="modal" onClick={onClose}><div className="card" onClick={(e) => e.stopPropagation()}>
+      <div className="between"><h3>Bills · {expense.description}</h3><button onClick={onClose}>Close</button></div>
+      {imgs === null && <p className="muted">Loading…</p>}
+      {imgs?.map((src, i) => (src ? <img key={i} className="bill" src={src} alt={`Bill ${i + 1}`} /> : <p key={i} className="err">Bill {i + 1} could not be loaded.</p>))}
+    </div></div>
+  );
+}
+
+function ExpenseList({ items, name, onEdit, onDelete, onBills }: ListProps) {
   return (
     <ul className="list">
       {items.map((e) => (
@@ -140,6 +158,7 @@ function ExpenseList({ items, name, onEdit, onDelete }: ListProps) {
           </span>
           <span className="nowrap">
             {fmt(e.amount)}{' '}
+            {!!e.billIds?.length && <button className="link" aria-label="View bills" onClick={() => onBills(e)}>📎{e.billIds.length}</button>}
             <button className="link" aria-label="Edit" onClick={() => onEdit(e)}>✎</button>
             <button className="link" aria-label="Delete" onClick={() => onDelete(e)}>✕</button>
           </span>
@@ -149,7 +168,7 @@ function ExpenseList({ items, name, onEdit, onDelete }: ListProps) {
   );
 }
 
-function ExpensesTab({ group, expenses, name, onEdit, onDelete }: { group: Group; expenses: Expense[] } & Omit<ListProps, 'items'>) {
+function ExpensesTab({ group, expenses, name, onEdit, onDelete, onBills }: { group: Group; expenses: Expense[] } & Omit<ListProps, 'items'>) {
   const [text, setText] = useState('');
   const [payer, setPayer] = useState('');
   const [from, setFrom] = useState('');
@@ -185,7 +204,7 @@ function ExpensesTab({ group, expenses, name, onEdit, onDelete }: { group: Group
         {active && <button className="link" onClick={() => { setText(''); setPayer(''); setFrom(''); setTo(''); }}>Clear filters</button>}
       </div>
       {filtered.length === 0 && <p className="muted">No matching entries.</p>}
-      <ExpenseList items={filtered} name={name} onEdit={onEdit} onDelete={onDelete} />
+      <ExpenseList items={filtered} name={name} onEdit={onEdit} onDelete={onDelete} onBills={onBills} />
     </>
   );
 }

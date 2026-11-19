@@ -36,6 +36,16 @@ service cloud.firestore {
         // Note: splits summing to amount is enforced in the client only.
       }
 
+      // Bill photos (compressed data URLs), kept apart from expenses so lists stay light.
+      match /bills/{bid} {
+        allow read, delete: if isMember(gid);
+        allow create: if isMember(gid)
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 600000;
+        allow update: if false;
+      }
+
       // Audit trail of adds, edits and deletes: append-only.
       match /log/{lid} {
         allow read: if isMember(gid);

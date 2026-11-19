@@ -2,10 +2,11 @@ import type { Expense } from './balances';
 import { fmt } from './money';
 import { toISODate, fmtDate } from './dates';
 
-export type Snap = Pick<Expense, 'description' | 'amount' | 'paidBy' | 'date' | 'splits'>;
+export type Snap = Pick<Expense, 'description' | 'amount' | 'paidBy' | 'date' | 'splits'> & { billIds?: string[] };
 
 export const snap = (e: Snap): Snap => ({
   description: e.description, amount: e.amount, paidBy: e.paidBy, date: e.date, splits: { ...e.splits },
+  billIds: [...(e.billIds ?? [])],
 });
 
 export interface LogEntry {
@@ -32,6 +33,8 @@ export function diff(before: Snap, after: Snap, name: (uid: string) => string): 
   if (before.paidBy !== after.paidBy) out.push(`paid by ${name(before.paidBy)} → ${name(after.paidBy)}`);
   if (toISODate(before.date) !== toISODate(after.date)) out.push(`date ${fmtDate(before.date)} → ${fmtDate(after.date)}`);
   if (splitKey(before.splits) !== splitKey(after.splits)) out.push('split changed');
+  const bills = (s: Snap) => s.billIds ?? [];
+  if (bills(before).join() !== bills(after).join()) out.push(`bills ${bills(before).length} → ${bills(after).length}`);
   return out;
 }
 

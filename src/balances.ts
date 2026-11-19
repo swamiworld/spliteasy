@@ -8,6 +8,7 @@ export interface Expense {
   date: number;
   createdBy: string;
   createdAt?: number;
+  billIds?: string[];
 }
 
 export interface Transfer { from: string; to: string; amount: number }
